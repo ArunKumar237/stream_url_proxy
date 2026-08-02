@@ -1,4 +1,5 @@
-fastapi>=0.116.0
-uvicorn[standard]>=0.35.0
-httpx[http2]>=0.28.1
-python-multipart>=0.0.20
+fastapi
+uvicorn[standard]
+httpx
+cachetools
+stream_loader  # your module

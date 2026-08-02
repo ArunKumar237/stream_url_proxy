@@ -1,80 +1,26 @@
 {
   "version": 1,
-  "exportedAt": 1785611268368,
+  "exportedAt": 1785656266278,
   "generator": "CloudStream Stream Export",
   "streams": [
     {
-      "type": "DASH",
-      "url": "https://sacdn2.hakunaymatata.com/dash/7092118814179346392_0_0_1080_h265_91/index_web.mpd",
-      "headers": {
-        "Referer": "https://apig.inmoviebox.com",
-        "Cookie": "CloudFront-Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9zYWNkbjIuaGFrdW5heW1hdGF0YS5jb20vZGFzaC83MDkyMTE4ODE0MTc5MzQ2MzkyXzBfMF8xMDgwX2gyNjVfOTEvKiIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc4NjIwOTM3Nn19fV19;CloudFront-Signature=miVKJX6FdiYZaM3bE1nPTiiewGhL9YM~HP9SIgrNmbjUiMQP~M7Takl2YYq487D6uoNOTmuVG8lLZIA503hDFeUX2kCulM5F2Akrs6TTZ-N1HLt~TuoEKDkXRcpUXadH3SaI3AEUv0U4O9lcg6RZKXyMmbPGXjGNOaBL-wELwTAxFiZGkdUnOHcf7~lDDfy1sz0tX~kzN3LtKe4OhYQ92hUTIPPfpthqPijUHBzMqkuSnMsXWlXsVcrf9XyYrypp4QPqB0nO4~10rrBN8tAOL3d~lyu-vjR3wdWzcq2dlDt2hnIOpkV1O5jZAWrIDjV4WU6f-JGegKkEr3pdnRtvtw__;CloudFront-Key-Pair-Id=KMHN1LQ1HEUPL;"
-      }
-    },
-    {
-      "type": "DASH",
-      "url": "https://sacdn2.hakunaymatata.com/dash/5745542525595669536_0_0_1080_h265_485/index_web.mpd",
-      "headers": {
-        "Referer": "https://apig.inmoviebox.com",
-        "Cookie": "CloudFront-Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9zYWNkbjIuaGFrdW5heW1hdGF0YS5jb20vZGFzaC81NzQ1NTQyNTI1NTk1NjY5NTM2XzBfMF8xMDgwX2gyNjVfNDg1LyoiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3ODYyMDk0ODN9fX1dfQ__;CloudFront-Signature=JGAuta5OqsQrLMihREyZNHtHWxjVb412nkoe5VIPXgUJi1XINIwCcCPmIx58psY91wv6Efj2avpKkt-gSsfRw7y~AvHMij~JWSYITVrJhbz6~TsRmsSRRi-VM9YAKk2Hd-Jqjhx-k0ukzOakLH-HJUVfQDxirBYIPz0U26sZLYxcFfS-oZSUJ9FpQ2yziUN8-bFT-OvEEUw~8O2OMEGTmiq9qOpK6URZtM0-GCGuJ5enll6iWwm8RJaJiGnIuZrDthmApS7AGD7ofp8wLQRCVdtp27CS5H4D1IHm7iQ7oGD6cYCCWg~dFeFMhNDi6ZOgfY2ZjxXR4~Ms8j23YMsKXA__;CloudFront-Key-Pair-Id=KMHN1LQ1HEUPL;"
-      }
-    },
-    {
-      "type": "DASH",
-      "url": "https://sacdn2.hakunaymatata.com/dash/7092118814179346392_0_0_1080_h265_91/index_web.mpd",
-      "headers": {
-        "Referer": "https://apig.inmoviebox.com",
-        "Cookie": "CloudFront-Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9zYWNkbjIuaGFrdW5heW1hdGF0YS5jb20vZGFzaC83MDkyMTE4ODE0MTc5MzQ2MzkyXzBfMF8xMDgwX2gyNjVfOTEvKiIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc4NjIxMzI0Mn19fV19;CloudFront-Signature=XeNAimu07buE8J4UPkl6fHb1nggmBG259w1dY3BFMFPhNH3GInfbWpP~9WNBB1p7S8Rxfvi-SjhrPQJL94kP8Abfw4agePrplpf9iEgXW0fO9qLkgfT4VkB9bTHaPnv7hEe1GjuKwc9pxNw2FXbtmzMNCaVK5f6-lsR3bZqZzRssUme4VPDGWUrq-bIRZj0EJ8Xg44eOhzdnxTRbXu0FGQXnNmkLnB4j-WkNcHG7AKfDyOu2bMphIsOgOVTnz2-C2AkLrU1eiL0L9tfMedVeEaJBbIctDAGFumzBu8JKYlrkchHTxBgQdVRlPcGptgc1sFixy4DkWXYTCWZEpKQ1Kw__;CloudFront-Key-Pair-Id=KMHN1LQ1HEUPL;"
-      }
-    },
-    {
-      "type": "DASH",
-      "url": "https://sacdn2.hakunaymatata.com/dash/7092118814179346392_0_0_1080_h265_91/index_web.mpd",
-      "headers": {
-        "Referer": "https://apig.inmoviebox.com",
-        "Cookie": "CloudFront-Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9zYWNkbjIuaGFrdW5heW1hdGF0YS5jb20vZGFzaC83MDkyMTE4ODE0MTc5MzQ2MzkyXzBfMF8xMDgwX2gyNjVfOTEvKiIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc4NjIxMzI0Mn19fV19;CloudFront-Signature=XeNAimu07buE8J4UPkl6fHb1nggmBG259w1dY3BFMFPhNH3GInfbWpP~9WNBB1p7S8Rxfvi-SjhrPQJL94kP8Abfw4agePrplpf9iEgXW0fO9qLkgfT4VkB9bTHaPnv7hEe1GjuKwc9pxNw2FXbtmzMNCaVK5f6-lsR3bZqZzRssUme4VPDGWUrq-bIRZj0EJ8Xg44eOhzdnxTRbXu0FGQXnNmkLnB4j-WkNcHG7AKfDyOu2bMphIsOgOVTnz2-C2AkLrU1eiL0L9tfMedVeEaJBbIctDAGFumzBu8JKYlrkchHTxBgQdVRlPcGptgc1sFixy4DkWXYTCWZEpKQ1Kw__;CloudFront-Key-Pair-Id=KMHN1LQ1HEUPL;"
-      }
-    },
-    {
       "type": "M3U8",
-      "url": "https://img1.flkow.com/myhls/2026/7/Jana_Nayagan/Hindi_720/index_preview_259.m3u8?auth_key=qrbfZ%2Bgt9lCMXrBGDyeZCmacCGpN%2BMfuP3CN82ahyaI%3D&expire=1785621980699",
+      "url": "https://net52.cc/mobile/pv/hls/0NYK581C4T9ZTPRHBGTU4FNA4Y.m3u8?in=d5cb85ac9078c825bbc81df2c147aab6::998c2373529df942811af528ba7fb857::1785656193::ni::m&hd=on&lang=eng",
       "headers": {
-        "Referer": "https://api.hlowb.com"
-      }
-    },
-    {
-      "type": "M3U8",
-      "url": "https://img1.wnowe.com/myhls/2026/7/Jana_Nayagan/Hindi_720/index_preview_276.m3u8?auth_key=TwHcNizqAeqYkT40Bm9OcQeL1%2FflP5HZUCb0yO%2BeEbk%3D&expire=1785621981393",
-      "headers": {
-        "Referer": "https://api.hlowb.com"
-      }
-    },
-    {
-      "type": "M3U8",
-      "url": "https://img1.fvncw.com/hls_mps/240865821/720/index_310.m3u8?auth_key=Kr%2By1UzrHr6emgWpfS%2FxpsncCpKFfMz1WZvUenCozWU%3D&expire=1785622016479",
-      "headers": {
-        "Referer": "https://api.hlowb.com"
-      }
-    },
-    {
-      "type": "M3U8",
-      "url": "https://img1.bcxvo.com/hls/084d23f8dd2482b12c9907136b133d56fda39f37/720/index_254.m3u8?auth_key=NuCX7M5Bm35rdUKpI%2BXKFvC8%2Bc%2FErS7aR8P8Ha8FcqU%3D&expire=1785622035804",
-      "headers": {
-        "Referer": "https://api.hlowb.com"
-      }
-    },
-    {
-      "type": "M3U8",
-      "url": "https://img1.bbxcw.com/myhls/2026/7/Nagaband/Hindi_720/index_256.m3u8?auth_key=LxjBssKT4otO84V52bDhUkWeUaWYSuooM0uqpjvN%2B3o%3D&expire=1785622051980",
-      "headers": {
-        "Referer": "https://api.hlowb.com"
-      }
-    },
-    {
-      "type": "M3U8",
-      "url": "https://img1.kclov.com/hls_mps/2a6a6aba9f358e5df5a92b1cfc632290f0129eb2/720/index_262.m3u8?auth_key=4o0hTpmc5f8zW3nR35ol1n1zymnr26N%2FE3b4x9qOaps%3D&expire=1785622052505",
-      "headers": {
-        "Referer": "https://api.hlowb.com"
+        "referer": "https://net52.cc/mobile/home?app=1",
+        "Accept": "*/*",
+        "Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8",
+        "Connection": "keep-alive",
+        "Cookie": "t_hash_t=d5cb85ac9078c825bbc81df2c147aab6%3A%3A0f636b867eb3c38d7196576f097c0aa0%3A%3A1785615424%3A%3Ani%3A%3Am; ott=pv; hd=on",
+        "Referer": "https://net52.cc/mobile/home?app=1",
+        "sec-ch-ua": "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"Android\"",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
+        "X-Requested-With": "app.netmirror.netmirrornew"
       }
     }
   ]
