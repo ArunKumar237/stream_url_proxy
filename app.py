@@ -1,31 +1,40 @@
-import re
+import asyncio
 import json
 import logging
+import re
 import urllib.parse
-from pathlib import Path
 from contextlib import asynccontextmanager
-from urllib.parse import urljoin, quote, urlparse
+from pathlib import Path
+from urllib.parse import quote, urljoin, urlparse
+
 import httpx
 from cachetools import TTLCache
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File
-from fastapi.responses import Response, RedirectResponse, StreamingResponse
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
-
+from fastapi.middleware.cors import CORSMiddleware
 import stream_loader
 
-# ─── Logging ──────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Config
+# ──────────────────────────────────────────────────────────────────────────────
+
 logging.basicConfig(level=logging.WARNING)
-logger = logging.getLogger("proxy")
+logger = logging.getLogger("stream_proxy")
 
-# ─── Constants ────────────────────────────────────────────────────────────────
-CACHE_MAX_TOTAL_BYTES   = 64 * 1024 * 1024
-CACHE_MAX_SEGMENT_BYTES = 1 * 1024 * 1024
-CACHE_TTL_SECONDS       = 300
-STREAM_CHUNK_SIZE       = 64 * 1024
+STREAM_FILE = Path("streams.json")
 
-# We now forward Content-Length and Content-Encoding because
-# we disabled auto-decompression — bytes pass through raw.
-FORWARD_HEADERS = (
+# Render-friendly limits
+CACHE_MAX_TOTAL_BYTES = 96 * 1024 * 1024      # 96 MB total cache
+CACHE_MAX_SEGMENT_BYTES = 5 * 1024 * 1024     # cache segments up to 5 MB
+CACHE_TTL_SECONDS = 600                       # 10 min
+STREAM_CHUNK_SIZE = 128 * 1024                # 128 KB
+
+PREFETCH_SEGMENTS = 2                         # next 2 segments only
+PREFETCH_CONCURRENCY = 2                      # keep it safe for Render
+
+# For raw media responses we pass upstream bytes as-is
+RAW_FORWARD_HEADERS = (
     "Content-Type",
     "Content-Length",
     "Content-Range",
@@ -33,14 +42,17 @@ FORWARD_HEADERS = (
     "Accept-Ranges",
     "ETag",
     "Last-Modified",
+    "Cache-Control",
 )
 
 _URI_RE = re.compile(r'URI="([^"]+)"')
 
-# ─── Cache ────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Cache
+# ──────────────────────────────────────────────────────────────────────────────
 
 class ByteSizedTTLCache(TTLCache):
-    def __init__(self, max_bytes: int, ttl: float):
+    def __init__(self, max_bytes: int, ttl: int):
         super().__init__(maxsize=max_bytes, ttl=ttl, getsizeof=self._sizeof)
 
     @staticmethod
@@ -49,55 +61,76 @@ class ByteSizedTTLCache(TTLCache):
             return max(1, len(value["content"]))
         return 1
 
+
 segment_cache = ByteSizedTTLCache(
     max_bytes=CACHE_MAX_TOTAL_BYTES,
-    ttl=CACHE_TTL_SECONDS
+    ttl=CACHE_TTL_SECONDS,
 )
 
-# ─── HTTP Clients ─────────────────────────────────────────────────────────────
+# segment_url -> [next_segment_1, next_segment_2]
+next_segments_map: dict[str, list[str]] = {}
 
-# Client for playlists / manifests — text content, decompression is fine
-playlist_client = httpx.AsyncClient(
+# avoid duplicate background prefetch
+prefetch_inflight: set[tuple[int, str]] = set()
+prefetch_semaphore = asyncio.Semaphore(PREFETCH_CONCURRENCY)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Clients
+# ──────────────────────────────────────────────────────────────────────────────
+
+# text client for playlists/manifests
+text_client = httpx.AsyncClient(
     follow_redirects=True,
     http2=False,
-    timeout=httpx.Timeout(connect=10, read=30, write=10, pool=10),
+    timeout=httpx.Timeout(connect=10, read=20, write=10, pool=10),
     limits=httpx.Limits(
         max_connections=20,
         max_keepalive_connections=10,
-        keepalive_expiry=20
-    )
+        keepalive_expiry=20,
+    ),
 )
 
-# Client for segments — RAW bytes, NO decompression
-# This is critical: upstream may use Content-Encoding tricks or serve
-# binary media as .js files. Auto-decompression corrupts the data.
-segment_client = httpx.AsyncClient(
+# raw client for media segments
+raw_client = httpx.AsyncClient(
     follow_redirects=True,
     http2=False,
     timeout=httpx.Timeout(connect=10, read=60, write=10, pool=10),
     limits=httpx.Limits(
         max_connections=20,
         max_keepalive_connections=10,
-        keepalive_expiry=20
+        keepalive_expiry=20,
     ),
     headers={
-        "Accept-Encoding": "identity"  # tell upstream: don't compress
-    }
+        "Accept-Encoding": "identity",   # ask upstream for raw bytes
+    },
 )
 
-# ─── App & Lifecycle ──────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# App state
+# ──────────────────────────────────────────────────────────────────────────────
 
 sessions: dict = {}
+
+
+def load_sessions() -> dict:
+    return stream_loader.load_streams()
+
+
+def reset_runtime_state():
+    segment_cache.clear()
+    next_segments_map.clear()
+    prefetch_inflight.clear()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global sessions
-    sessions = stream_loader.load_streams()
-    logger.warning("Startup: loaded %d streams", len(sessions))
+    sessions = load_sessions()
+    logger.warning("Loaded %d streams", len(sessions))
     yield
-    await playlist_client.aclose()
-    await segment_client.aclose()
-    logger.warning("Shutdown complete")
+    await text_client.aclose()
+    await raw_client.aclose()
+
 
 app = FastAPI(
     lifespan=lifespan,
@@ -106,56 +139,56 @@ app = FastAPI(
     openapi_url=None,
 )
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────────────────────
 
 def get_session(stream_id: int) -> dict | None:
     return sessions.get(stream_id)
 
 
-def pick_response_headers(headers: httpx.Headers) -> dict:
-    return {h: headers[h] for h in FORWARD_HEADERS if h in headers}
-
-
-def rewrite_m3u8(text: str, playlist_url: str, proxy_base: str) -> str:
-    out = []
-
-    for line in text.splitlines():
-        stripped = line.strip()
-
-        if not stripped:
-            out.append(line)
-            continue
-
-        # Rewrite URI="..." inside supported HLS tags
-        if stripped.startswith((
-            "#EXT-X-MEDIA",
-            "#EXT-X-I-FRAME-STREAM-INF",
-            "#EXT-X-MAP",
-            "#EXT-X-KEY",
-        )):
-            def replace_uri(match):
-                absolute = urljoin(playlist_url, match.group(1))
-                return f'URI="{proxy_base}{quote(absolute, safe="")}"'
-
-            out.append(_URI_RE.sub(replace_uri, line))
-            continue
-
-        # Keep other tags unchanged
-        if stripped.startswith("#"):
-            out.append(line)
-            continue
-
-        # Rewrite standalone segment/sub-playlist URI
-        absolute = urljoin(playlist_url, stripped)
-        out.append(proxy_base + quote(absolute, safe=""))
-
-    return "\n".join(out)
-
-
-async def fetch_playlist(url: str, headers: dict) -> httpx.Response:
-    """Fetch text content like playlists and manifests."""
+def is_m3u8_url(url: str) -> bool:
     try:
-        return await playlist_client.get(url, headers=headers)
+        return urlparse(url).path.lower().endswith(".m3u8")
+    except Exception:
+        return url.lower().endswith(".m3u8")
+
+
+def unique_urls(urls: list[str]) -> list[str]:
+    seen = set()
+    out = []
+    for url in urls:
+        if url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out
+
+
+def pick_raw_headers(headers: httpx.Headers) -> dict:
+    return {h: headers[h] for h in RAW_FORWARD_HEADERS if h in headers}
+
+
+def make_binary_response(body: bytes, status_code: int, headers: dict) -> Response:
+    final_headers = dict(headers)
+    final_headers.setdefault("Content-Type", "application/octet-stream")
+    return Response(
+        content=body,
+        status_code=status_code,
+        headers=final_headers,
+    )
+
+
+async def fetch_text(url: str, headers: dict) -> httpx.Response:
+    try:
+        return await text_client.get(url, headers=headers)
     except httpx.TimeoutException:
         raise HTTPException(504, "Upstream timeout")
     except httpx.ConnectError:
@@ -164,87 +197,220 @@ async def fetch_playlist(url: str, headers: dict) -> httpx.Response:
         raise HTTPException(502, f"Upstream error: {e}")
 
 
-async def serve_segment(
-    url: str,
-    headers: dict,
-    cache_key: tuple,
-) -> Response | StreamingResponse:
-    """
-    Fetch a media segment with NO decompression.
-    Raw bytes from upstream pass through exactly as-is.
-    """
+async def fetch_raw_stream(url: str, headers: dict) -> httpx.Response:
     try:
-        req = segment_client.build_request("GET", url, headers=headers)
-        r   = await segment_client.send(req, stream=True)
+        req = raw_client.build_request("GET", url, headers=headers)
+        return await raw_client.send(req, stream=True)
     except httpx.TimeoutException:
-        raise HTTPException(504, "Upstream segment timeout")
+        raise HTTPException(504, "Upstream timeout")
     except httpx.ConnectError:
         raise HTTPException(502, "Cannot reach upstream")
     except httpx.HTTPError as e:
         raise HTTPException(502, f"Upstream error: {e}")
 
-    resp_headers = pick_response_headers(r.headers)
-    content_type = r.headers.get("Content-Type", "application/octet-stream")
-    status       = r.status_code
 
-    # Content-Length is safe to forward now because we disabled decompression —
-    # the raw byte count matches what we will actually send.
-    declared_length = int(r.headers.get("Content-Length", 0))
+async def read_raw_body(response: httpx.Response) -> bytes:
+    buf = bytearray()
+    async for chunk in response.aiter_raw():
+        buf.extend(chunk)
+    return bytes(buf)
 
-    # ── Small segment → buffer + cache ────────────────────────────────────
-    if 0 < declared_length <= CACHE_MAX_SEGMENT_BYTES:
-        # Read raw bytes — no decompression happening
-        body = b""
-        async for chunk in r.aiter_raw():
-            body += chunk
-        await r.aclose()
+
+def rewrite_m3u8(
+    text: str,
+    playlist_url: str,
+    proxy_base: str,
+) -> tuple[str, list[str]]:
+    out = []
+    media_segment_urls: list[str] = []
+    initial_prefetch_urls: list[str] = []
+
+    for line in text.splitlines():
+        stripped = line.strip()
+
+        if not stripped:
+            out.append(line)
+            continue
+
+        # Rewrite URI="..." tags
+        if stripped.startswith((
+            "#EXT-X-MEDIA",
+            "#EXT-X-I-FRAME-STREAM-INF",
+            "#EXT-X-MAP",
+            "#EXT-X-KEY",
+        )):
+            def replace_uri(match):
+                absolute = urljoin(playlist_url, match.group(1))
+
+                # prefetch init segment if present
+                if stripped.startswith("#EXT-X-MAP") and not is_m3u8_url(absolute):
+                    initial_prefetch_urls.append(absolute)
+
+                return f'URI="{proxy_base}{quote(absolute, safe="")}"'
+
+            out.append(_URI_RE.sub(replace_uri, line))
+            continue
+
+        # Keep non-URI tags unchanged
+        if stripped.startswith("#"):
+            out.append(line)
+            continue
+
+        # Rewrite segment/sub-playlist line
+        absolute = urljoin(playlist_url, stripped)
+        out.append(proxy_base + quote(absolute, safe=""))
+
+        # only store actual media segment URLs, not nested playlists
+        if not is_m3u8_url(absolute):
+            media_segment_urls.append(absolute)
+
+    # Build next-segment map for background prefetch after each segment request
+    if media_segment_urls:
+        for i, seg_url in enumerate(media_segment_urls):
+            next_segments_map[seg_url] = media_segment_urls[i + 1:i + 1 + PREFETCH_SEGMENTS]
+
+    # Prefetch init + first few real segments when playlist is first loaded
+    initial_prefetch_urls.extend(media_segment_urls[:PREFETCH_SEGMENTS])
+
+    return "\n".join(out), unique_urls(initial_prefetch_urls)
+
+
+async def background_prefetch(stream_id: int, urls: list[str], headers: dict):
+    urls = unique_urls(urls)
+
+    for url in urls:
+        key = (stream_id, url)
+
+        if key in prefetch_inflight:
+            continue
+
+        cache_key = (stream_id, url, None)
+        if segment_cache.get(cache_key) is not None:
+            continue
+
+        prefetch_inflight.add(key)
 
         try:
-            segment_cache[cache_key] = {
-                "content":      body,
-                "status":       status,
-                "content_type": content_type,
-                "headers":      resp_headers,
-            }
-        except ValueError:
+            async with prefetch_semaphore:
+                response = await fetch_raw_stream(url, headers)
+
+                try:
+                    if response.status_code != 200:
+                        continue
+
+                    declared_length = int(response.headers.get("Content-Length", "0") or "0")
+
+                    # Render-friendly: only prefetch/cache smaller segments
+                    if declared_length <= 0 or declared_length > CACHE_MAX_SEGMENT_BYTES:
+                        continue
+
+                    body = await read_raw_body(response)
+                    resp_headers = pick_raw_headers(response.headers)
+                    resp_headers.setdefault(
+                        "Content-Type",
+                        response.headers.get("Content-Type", "application/octet-stream")
+                    )
+
+                    segment_cache[cache_key] = {
+                        "content": body,
+                        "status": response.status_code,
+                        "headers": resp_headers,
+                    }
+                finally:
+                    await response.aclose()
+
+        except Exception:
             pass
+        finally:
+            prefetch_inflight.discard(key)
 
-        return Response(
-            content=body,
-            status_code=status,
-            media_type=content_type,
-            headers=resp_headers,
-        )
 
-    # ── Large or unknown → stream raw bytes ───────────────────────────────
-    async def _stream():
-        async for chunk in r.aiter_raw():
-            yield chunk
+def schedule_prefetch(stream_id: int, urls: list[str], headers: dict):
+    if not urls:
+        return
 
-    return StreamingResponse(
-        _stream(),
-        status_code=status,
-        media_type=content_type,
-        headers=resp_headers,
-        background=BackgroundTask(r.aclose),
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(background_prefetch(stream_id, urls[:3], headers.copy()))
+    except RuntimeError:
+        pass
+
+
+async def serve_raw_segment(
+    stream_id: int,
+    url: str,
+    headers: dict,
+    cache_key: tuple,
+) -> Response | StreamingResponse:
+    response = await fetch_raw_stream(url, headers)
+    resp_headers = pick_raw_headers(response.headers)
+    resp_headers.setdefault(
+        "Content-Type",
+        response.headers.get("Content-Type", "application/octet-stream")
     )
 
+    status_code = response.status_code
+    declared_length = int(response.headers.get("Content-Length", "0") or "0")
 
-# ─── Routes ───────────────────────────────────────────────────────────────────
+    # Do not cache error responses
+    if status_code not in (200, 206):
+        return StreamingResponse(
+            response.aiter_raw(),
+            status_code=status_code,
+            headers=resp_headers,
+            background=BackgroundTask(response.aclose),
+        )
+
+    # Buffer + cache small responses
+    if 0 < declared_length <= CACHE_MAX_SEGMENT_BYTES:
+        try:
+            body = await read_raw_body(response)
+        finally:
+            await response.aclose()
+
+        segment_cache[cache_key] = {
+            "content": body,
+            "status": status_code,
+            "headers": resp_headers,
+        }
+
+        return make_binary_response(body, status_code, resp_headers)
+
+    # Stream large responses
+    return StreamingResponse(
+        response.aiter_raw(),
+        status_code=status_code,
+        headers=resp_headers,
+        background=BackgroundTask(response.aclose),
+    )
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Routes
+# ──────────────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "streams": len(sessions)}
+    return {
+        "ok": True,
+        "streams": len(sessions),
+        "cache_entries": len(segment_cache),
+        "cache_bytes": segment_cache.currsize,
+        "cache_mb": round(segment_cache.currsize / 1024 / 1024, 2),
+    }
 
 
 @app.get("/streams")
 async def list_streams():
     global sessions
-    sessions = stream_loader.load_streams()
+    sessions = load_sessions()
     return {
         "count": len(sessions),
         "streams": [
-            {"id": s["id"], "type": s["type"], "url": s["url"]}
+            {
+                "id": s["id"],
+                "type": s["type"],
+                "url": s["url"],
+            }
             for s in sessions.values()
         ],
     }
@@ -262,7 +428,7 @@ async def play(stream_id: int, request: Request):
     if session["type"] == "M3U8":
         return RedirectResponse(f"{request.base_url}playlist/{stream_id}.m3u8")
 
-    raise HTTPException(400, f"Unsupported type: {session['type']}")
+    raise HTTPException(400, f"Unsupported stream type: {session['type']}")
 
 
 @app.get("/playlist/{stream_id}.m3u8")
@@ -271,18 +437,25 @@ async def playlist(stream_id: int, request: Request):
     if session is None:
         raise HTTPException(404, "Stream not found")
 
-    r = await fetch_playlist(session["url"], session["headers"].copy())
+    headers = session["headers"].copy()
+    response = await fetch_text(session["url"], headers)
 
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, "Upstream playlist error")
+    if response.status_code != 200:
+        raise HTTPException(response.status_code, "Upstream playlist error")
 
-    rewritten = rewrite_m3u8(
-        r.text,
+    rewritten, prefetch_urls = rewrite_m3u8(
+        response.text,
         session["url"],
-        f"{request.base_url}hls/{stream_id}/"
+        f"{request.base_url}hls/{stream_id}/",
     )
 
-    return Response(rewritten, media_type="application/vnd.apple.mpegurl")
+    # prefetch init + first two segments
+    schedule_prefetch(stream_id, prefetch_urls, session["headers"])
+
+    return Response(
+        content=rewritten,
+        media_type="application/vnd.apple.mpegurl",
+    )
 
 
 @app.get("/hls/{stream_id}/{encoded_url:path}")
@@ -292,42 +465,57 @@ async def hls(stream_id: int, encoded_url: str, request: Request):
         raise HTTPException(404, "Stream not found")
 
     url = urllib.parse.unquote(encoded_url)
-    headers = session["headers"].copy()
+
+    base_headers = session["headers"].copy()
+    request_headers = base_headers.copy()
 
     if "range" in request.headers:
-        headers["Range"] = request.headers["range"]
+        request_headers["Range"] = request.headers["range"]
 
-    cache_key = (stream_id, url, headers.get("Range"))
+    cache_key = (stream_id, url, request_headers.get("Range"))
 
-    # cache hit
+    # Cache hit
     cached = segment_cache.get(cache_key)
     if cached is not None:
-        return Response(
-            content=cached["content"],
-            status_code=cached["status"],
-            media_type=cached["content_type"],
-            headers=cached["headers"],
+        return make_binary_response(
+            cached["content"],
+            cached["status"],
+            cached["headers"],
         )
 
-    # IMPORTANT FIX:
-    # detect playlist using parsed URL path, not whole URL string
+    # Detect playlist correctly even with query params
     if is_m3u8_url(url):
-        r = await fetch_playlist(url, headers)
-        if r.status_code != 200:
-            raise HTTPException(r.status_code, "Upstream playlist error")
+        response = await fetch_text(url, request_headers)
 
-        rewritten = rewrite_m3u8(
-            r.text,
+        if response.status_code != 200:
+            raise HTTPException(response.status_code, "Upstream playlist error")
+
+        rewritten, prefetch_urls = rewrite_m3u8(
+            response.text,
             url,
-            f"{request.base_url}hls/{stream_id}/"
+            f"{request.base_url}hls/{stream_id}/",
         )
+
+        schedule_prefetch(stream_id, prefetch_urls, base_headers)
+
         return Response(
             content=rewritten,
-            media_type="application/vnd.apple.mpegurl"
+            media_type="application/vnd.apple.mpegurl",
         )
 
-    # otherwise treat as segment
-    return await serve_segment(url, headers, cache_key)
+    # Segment
+    resp = await serve_raw_segment(
+        stream_id=stream_id,
+        url=url,
+        headers=request_headers,
+        cache_key=cache_key,
+    )
+
+    # Only prefetch next full segments, not ranged requests
+    if "Range" not in request_headers:
+        schedule_prefetch(stream_id, next_segments_map.get(url, []), base_headers)
+
+    return resp
 
 
 @app.get("/manifest/{stream_id}.mpd")
@@ -336,21 +524,24 @@ async def manifest(stream_id: int, request: Request):
     if session is None:
         raise HTTPException(404, "Stream not found")
 
-    r = await fetch_playlist(session["url"], session["headers"].copy())
+    response = await fetch_text(session["url"], session["headers"].copy())
 
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, "Unable to fetch MPD")
+    if response.status_code != 200:
+        raise HTTPException(response.status_code, "Unable to fetch MPD")
 
     proxy_base = f"{request.base_url}proxy/{stream_id}/"
 
     mpd = re.sub(
         r'(<MPD[^>]*>)',
         rf'\1\n<BaseURL>{proxy_base}</BaseURL>',
-        r.text,
-        count=1
+        response.text,
+        count=1,
     )
 
-    return Response(mpd, media_type="application/dash+xml")
+    return Response(
+        content=mpd,
+        media_type="application/dash+xml",
+    )
 
 
 @app.get("/proxy/{stream_id}/{path:path}")
@@ -359,8 +550,8 @@ async def proxy(stream_id: int, path: str, request: Request):
     if session is None:
         raise HTTPException(404, "Stream not found")
 
-    base = session.get("base_url") or (session["url"].rsplit("/", 1)[0] + "/")
-    url  = urljoin(base, path)
+    base_url = session.get("base_url") or (session["url"].rsplit("/", 1)[0] + "/")
+    url = urljoin(base_url, path)
 
     headers = session["headers"].copy()
     if "range" in request.headers:
@@ -370,19 +561,19 @@ async def proxy(stream_id: int, path: str, request: Request):
 
     cached = segment_cache.get(cache_key)
     if cached is not None:
-        return Response(
-            content=cached["content"],
-            status_code=cached["status"],
-            media_type=cached["content_type"],
-            headers=cached["headers"],
+        return make_binary_response(
+            cached["content"],
+            cached["status"],
+            cached["headers"],
         )
 
-    return await serve_segment(url, headers, cache_key)
+    return await serve_raw_segment(
+        stream_id=stream_id,
+        url=url,
+        headers=headers,
+        cache_key=cache_key,
+    )
 
-
-# ─── Upload ───────────────────────────────────────────────────────────────────
-
-STREAM_FILE = Path("streams.json")
 
 @app.post("/upload")
 async def upload(
@@ -392,30 +583,26 @@ async def upload(
     try:
         if file is not None:
             content = await file.read()
-            data    = json.loads(content)
+            data = json.loads(content)
         else:
-            data    = await request.json()
-            content = json.dumps(data, indent=2).encode()
+            data = await request.json()
+            content = json.dumps(data, indent=2).encode("utf-8")
 
         if "streams" not in data:
-            raise HTTPException(400, "'streams' field missing")
+            raise HTTPException(400, "Invalid export: 'streams' field missing")
 
         STREAM_FILE.write_bytes(content)
 
         global sessions
-        sessions = stream_loader.load_streams()
+        sessions = load_sessions()
+        reset_runtime_state()
 
         return {
-            "success":      True,
+            "success": True,
+            "message": "Upload successful",
             "stream_count": len(sessions),
-            "types":        sorted({s["type"] for s in sessions.values()}),
+            "types": sorted({s["type"] for s in sessions.values()}),
         }
 
     except json.JSONDecodeError:
         raise HTTPException(400, "Invalid JSON")
-
-def is_m3u8_url(url: str) -> bool:
-    try:
-        return urlparse(url).path.lower().endswith(".m3u8")
-    except Exception:
-        return url.lower().endswith(".m3u8")
