@@ -2,4 +2,4 @@ fastapi
 uvicorn[standard]
 httpx
 cachetools
-stream_loader  # your module
+python-multipart
