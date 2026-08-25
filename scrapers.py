@@ -38,14 +38,21 @@ MOVIEZWAP_DOMAINS = [
 async def search_moviezwap(query: str) -> list[dict]:
     results = []
 
-    async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+    async with httpx.AsyncClient(follow_redirects=True, timeout=12) as client:
         for domain in MOVIEZWAP_DOMAINS:
-            search_url = f"{domain}/search.php?find={quote_plus(query)}"
-            headers = {**DEFAULT_HEADERS, "Referer": f"{domain}/"}
-
             try:
+                # Step 1: Visit homepage to resolve active domain redirect and establish session
+                home_resp = await client.get(f"{domain}/", headers=DEFAULT_HEADERS)
+                if home_resp.status_code != 200:
+                    continue
+
+                active_base = str(home_resp.url).rstrip("/")
+                search_url = f"{active_base}/search.php?find={quote_plus(query)}"
+                headers = {**DEFAULT_HEADERS, "Referer": f"{active_base}/"}
+
+                # Step 2: Query search endpoint
                 r = await client.get(search_url, headers=headers)
-                logger.info(f"[SCRAPER_MOVIEZWAP] Status {r.status_code} from {domain}")
+                logger.info(f"[SCRAPER_MOVIEZWAP] Search Status {r.status_code} from {active_base}")
 
                 if r.status_code != 200:
                     continue
@@ -61,7 +68,7 @@ async def search_moviezwap(query: str) -> list[dict]:
                 for m in matches:
                     href = m.group(1)
                     title = re.sub(r'<[^>]+>', '', m.group(2)).strip()
-                    abs_url = urljoin(domain, href)
+                    abs_url = urljoin(active_base, href)
 
                     if not title or abs_url in seen_urls:
                         continue
