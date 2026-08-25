@@ -224,9 +224,19 @@ def make_binary_response(body: bytes, status_code: int, headers: dict) -> Respon
     )
 
 
+DEFAULT_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
+
+
 async def fetch_text(url: str, headers: dict) -> httpx.Response:
+    req_headers = dict(headers)
+    if not any(k.lower() == "user-agent" for k in req_headers):
+        req_headers["User-Agent"] = DEFAULT_BROWSER_UA
     try:
-        return await text_client.get(url, headers=headers)
+        return await text_client.get(url, headers=req_headers)
     except httpx.TimeoutException:
         raise HTTPException(504, "Upstream timeout")
     except httpx.ConnectError:
@@ -236,8 +246,11 @@ async def fetch_text(url: str, headers: dict) -> httpx.Response:
 
 
 async def fetch_raw_stream(url: str, headers: dict) -> httpx.Response:
+    req_headers = dict(headers)
+    if not any(k.lower() == "user-agent" for k in req_headers):
+        req_headers["User-Agent"] = DEFAULT_BROWSER_UA
     try:
-        req = raw_client.build_request("GET", url, headers=headers)
+        req = raw_client.build_request("GET", url, headers=req_headers)
         return await raw_client.send(req, stream=True)
     except httpx.TimeoutException:
         raise HTTPException(504, "Upstream timeout")
@@ -252,6 +265,28 @@ async def read_raw_body(response: httpx.Response) -> bytes:
     async for chunk in response.aiter_raw():
         buf.extend(chunk)
     return bytes(buf)
+
+
+def encode_hls_url(url: str) -> str:
+    import base64
+    return base64.urlsafe_b64encode(url.encode("utf-8")).decode("utf-8").rstrip("=")
+
+
+def decode_hls_url(encoded: str) -> str:
+    import base64
+    if encoded.startswith("http://") or encoded.startswith("https://"):
+        return encoded
+    try:
+        padded = encoded + "=" * (-len(encoded) % 4)
+        decoded = base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8")
+        if decoded.startswith("http://") or decoded.startswith("https://"):
+            return decoded
+    except Exception:
+        pass
+    unquoted = urllib.parse.unquote(encoded)
+    if unquoted.startswith("http://") or unquoted.startswith("https://"):
+        return unquoted
+    return encoded
 
 
 def rewrite_m3u8(
@@ -284,7 +319,7 @@ def rewrite_m3u8(
                 if stripped.startswith("#EXT-X-MAP") and not is_m3u8_url(absolute):
                     initial_prefetch_urls.append(absolute)
 
-                return f'URI="{proxy_base}{quote(absolute, safe="")}"'
+                return f'URI="{proxy_base}{encode_hls_url(absolute)}"'
 
             out.append(_URI_RE.sub(replace_uri, line))
             continue
@@ -296,7 +331,7 @@ def rewrite_m3u8(
 
         # Rewrite segment/sub-playlist line
         absolute = urljoin(playlist_url, stripped)
-        out.append(proxy_base + quote(absolute, safe=""))
+        out.append(proxy_base + encode_hls_url(absolute))
 
         # only store actual media segment URLs, not nested playlists
         if not is_m3u8_url(absolute):
@@ -506,7 +541,7 @@ async def hls(stream_id: int, encoded_url: str, request: Request):
     if session is None:
         raise HTTPException(404, "Stream not found")
 
-    url = urllib.parse.unquote(encoded_url)
+    url = decode_hls_url(encoded_url)
 
     base_headers = session["headers"].copy()
     request_headers = base_headers.copy()
