@@ -47,7 +47,7 @@ async def search_moviezwap(query: str) -> list[dict]:
                     continue
 
                 active_base = str(home_resp.url).rstrip("/")
-                search_url = f"{active_base}/search.php?find={quote_plus(query)}"
+                search_url = f"{active_base}/search.php?q={quote_plus(query)}"
                 headers = {**DEFAULT_HEADERS, "Referer": f"{active_base}/"}
 
                 # Step 2: Query search endpoint
