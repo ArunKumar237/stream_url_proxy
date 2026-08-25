@@ -235,10 +235,27 @@ DEFAULT_BROWSER_UA = (
 )
 
 
-async def fetch_text(url: str, headers: dict) -> httpx.Response:
-    req_headers = dict(headers)
+def prepare_upstream_headers(url: str, headers: dict) -> dict:
+    req_headers = dict(headers or {})
     if not any(k.lower() == "user-agent" for k in req_headers):
         req_headers["User-Agent"] = DEFAULT_BROWSER_UA
+    if not any(k.lower() == "referer" for k in req_headers):
+        url_lower = url.lower()
+        if "slast430did" in url_lower or "allmovieland" in url_lower:
+            req_headers["Referer"] = "https://allmovieland.one/"
+        elif "moviezwap" in url_lower or "moviezzwaphd" in url_lower:
+            req_headers["Referer"] = "https://www.moviezwap.taxi/"
+        elif "klcxm.com" in url_lower:
+            req_headers["Referer"] = "https://api.hlowb.com"
+        elif "mycdn-mb.xyz" in url_lower:
+            req_headers["Referer"] = "MovieBlast"
+            req_headers["User-Agent"] = "MovieBlast"
+            req_headers["x-request-x"] = "com.movieblast"
+    return req_headers
+
+
+async def fetch_text(url: str, headers: dict) -> httpx.Response:
+    req_headers = prepare_upstream_headers(url, headers)
     try:
         r = await text_client.get(url, headers=req_headers)
         logger.info(f"[UPSTREAM_TEXT_RESP] Status: {r.status_code} | Content-Type: {r.headers.get('content-type', 'N/A')} | URL: {url}")
@@ -255,9 +272,7 @@ async def fetch_text(url: str, headers: dict) -> httpx.Response:
 
 
 async def fetch_raw_stream(url: str, headers: dict) -> httpx.Response:
-    req_headers = dict(headers)
-    if not any(k.lower() == "user-agent" for k in req_headers):
-        req_headers["User-Agent"] = DEFAULT_BROWSER_UA
+    req_headers = prepare_upstream_headers(url, headers)
     try:
         req = raw_client.build_request("GET", url, headers=req_headers)
         r = await raw_client.send(req, stream=True)
