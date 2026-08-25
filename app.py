@@ -653,6 +653,15 @@ async def video(stream_id: int, request: Request, filename: str | None = None):
             pass
 
     response = await fetch_raw_stream(url, headers)
+    content_type = response.headers.get("content-type", "").lower()
+
+    if "text/html" in content_type:
+        await response.aclose()
+        raise HTTPException(
+            status_code=403,
+            detail="Upstream server returned an HTML webpage instead of a media stream. The video URL or security token may be expired or invalid.",
+        )
+
     resp_headers = pick_raw_headers(response.headers)
     resp_headers.setdefault("Accept-Ranges", "bytes")
     if "Content-Type" not in resp_headers:
