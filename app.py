@@ -10,11 +10,13 @@ from urllib.parse import quote, urljoin, urlparse
 import httpx
 from cachetools import TTLCache
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import RedirectResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from fastapi.middleware.cors import CORSMiddleware
 import stream_loader
 import resolvers
+import scrapers
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Config
@@ -790,6 +792,93 @@ async def video(stream_id: int, request: Request, filename: str | None = None):
         headers=resp_headers,
         background=BackgroundTask(response.aclose),
     )
+
+
+STATIC_DIR = Path(__file__).parent / "static"
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/")
+async def root():
+    index_path = STATIC_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path))
+    return {
+        "status": "online",
+        "service": "MovieBox Stream URL Proxy",
+        "endpoints": {
+            "search": "/api/search?q={movie_name}",
+            "resolve": "/api/resolve",
+            "streams": "/streams",
+            "upload": "/upload",
+        }
+    }
+
+
+@app.get("/api/search")
+async def api_search(q: str = ""):
+    if not q.strip():
+        return {"query": q, "count": 0, "results": []}
+    results = await scrapers.search_all_movies(q.strip())
+    return {"query": q, "count": len(results), "results": results}
+
+
+@app.post("/api/resolve")
+async def api_resolve(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON body")
+
+    movie_url = data.get("url")
+    provider = data.get("provider", "Unknown")
+    quality = data.get("quality", "720p")
+
+    if not movie_url:
+        raise HTTPException(400, "Missing 'url' parameter")
+
+    logger.info(f"[API_RESOLVE] Resolving '{movie_url}' from provider '{provider}' (target={quality})...")
+
+    resolved_url, resolved_headers = await resolvers.resolve_stream(movie_url, {}, target_quality=quality)
+    if not resolved_url:
+        logger.error(f"[API_RESOLVE ERROR] Could not resolve video stream from: {movie_url}")
+        return {"success": False, "detail": "Could not resolve stream link from provider"}
+
+    # Determine stream type
+    url_lower = resolved_url.lower()
+    if ".m3u8" in url_lower:
+        stype = "M3U8"
+    elif ".mpd" in url_lower:
+        stype = "DASH"
+    else:
+        stype = "VIDEO"
+
+    # Allocate next session ID
+    global sessions
+    stream_id = max(sessions.keys(), default=-1) + 1 if sessions else 0
+    sessions[stream_id] = {
+        "id": stream_id,
+        "type": stype,
+        "url": resolved_url,
+        "base_url": resolved_url.rsplit("/", 1)[0] + "/",
+        "headers": resolved_headers or {},
+    }
+
+    logger.info(f"[API_RESOLVE SUCCESS] Registered Stream {stream_id} [{stype}] -> {resolved_url}")
+
+    hls_endpoint = f"/playlist/{stream_id}.m3u8" if stype == "M3U8" else None
+    video_endpoint = f"/video/{stream_id}" if stype == "VIDEO" else None
+
+    return {
+        "success": True,
+        "stream_id": stream_id,
+        "type": stype,
+        "play_url": f"/play/{stream_id}",
+        "hls_url": hls_endpoint,
+        "video_url": video_endpoint,
+        "target_url": resolved_url,
+    }
 
 
 @app.post("/upload")
