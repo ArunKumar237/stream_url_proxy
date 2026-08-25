@@ -20,8 +20,12 @@ import resolvers
 # Config
 # ──────────────────────────────────────────────────────────────────────────────
 
-logging.basicConfig(level=logging.WARNING)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 logger = logging.getLogger("stream_proxy")
+logger.setLevel(logging.INFO)
 
 STREAM_FILE = Path("streams.json")
 
@@ -236,12 +240,17 @@ async def fetch_text(url: str, headers: dict) -> httpx.Response:
     if not any(k.lower() == "user-agent" for k in req_headers):
         req_headers["User-Agent"] = DEFAULT_BROWSER_UA
     try:
-        return await text_client.get(url, headers=req_headers)
+        r = await text_client.get(url, headers=req_headers)
+        logger.info(f"[UPSTREAM_TEXT_RESP] Status: {r.status_code} | Content-Type: {r.headers.get('content-type', 'N/A')} | URL: {url}")
+        return r
     except httpx.TimeoutException:
-        raise HTTPException(504, "Upstream timeout")
-    except httpx.ConnectError:
-        raise HTTPException(502, "Cannot reach upstream")
+        logger.error(f"[UPSTREAM_TIMEOUT] Request timed out for: {url}")
+        raise HTTPException(504, f"Upstream timeout for {url}")
+    except httpx.ConnectError as e:
+        logger.error(f"[UPSTREAM_CONNECT_ERR] Cannot connect to: {url} | {e}")
+        raise HTTPException(502, f"Cannot reach upstream: {url}")
     except httpx.HTTPError as e:
+        logger.error(f"[UPSTREAM_HTTP_ERR] HTTP error for: {url} | {e}")
         raise HTTPException(502, f"Upstream error: {e}")
 
 
@@ -251,12 +260,22 @@ async def fetch_raw_stream(url: str, headers: dict) -> httpx.Response:
         req_headers["User-Agent"] = DEFAULT_BROWSER_UA
     try:
         req = raw_client.build_request("GET", url, headers=req_headers)
-        return await raw_client.send(req, stream=True)
+        r = await raw_client.send(req, stream=True)
+        logger.info(
+            f"[UPSTREAM_RAW_RESP] Status: {r.status_code} | "
+            f"Content-Type: {r.headers.get('content-type', 'N/A')} | "
+            f"Length: {r.headers.get('content-length', 'chunked')} | "
+            f"URL: {url}"
+        )
+        return r
     except httpx.TimeoutException:
-        raise HTTPException(504, "Upstream timeout")
-    except httpx.ConnectError:
-        raise HTTPException(502, "Cannot reach upstream")
+        logger.error(f"[UPSTREAM_TIMEOUT] Media stream request timed out for: {url}")
+        raise HTTPException(504, f"Upstream timeout for {url}")
+    except httpx.ConnectError as e:
+        logger.error(f"[UPSTREAM_CONNECT_ERR] Cannot connect to media host: {url} | {e}")
+        raise HTTPException(502, f"Cannot reach upstream: {url}")
     except httpx.HTTPError as e:
+        logger.error(f"[UPSTREAM_HTTP_ERR] Media stream error for: {url} | {e}")
         raise HTTPException(502, f"Upstream error: {e}")
 
 
@@ -427,6 +446,7 @@ async def serve_raw_segment(
 
     # Do not cache error responses
     if status_code not in (200, 206):
+        logger.warning(f"[SEGMENT_WARN] Upstream returned status {status_code} for: {url}")
         return StreamingResponse(
             response.aiter_raw(),
             status_code=status_code,
@@ -494,10 +514,12 @@ async def list_streams():
 async def play(stream_id: int, request: Request):
     session = get_session(stream_id)
     if session is None:
+        logger.warning(f"[Stream {stream_id}] [PLAY] Stream not found (404)")
         raise HTTPException(404, "Stream not found")
 
     stype = session.get("type", "").upper()
     url = session.get("url", "")
+    logger.info(f"[Stream {stream_id}] [PLAY] Type: {stype} | Target URL: {url}")
 
     if stype in ("DASH", "MPD") or is_dash_url(url):
         return RedirectResponse(f"{request.base_url}manifest/{stream_id}.mpd")
@@ -514,15 +536,18 @@ async def playlist(stream_id: int, request: Request):
     if session is None:
         raise HTTPException(404, "Stream not found")
 
+    url = session["url"]
+    logger.info(f"[Stream {stream_id}] [M3U8 Master] Fetching playlist from: {url}")
     headers = session["headers"].copy()
-    response = await fetch_text(session["url"], headers)
+    response = await fetch_text(url, headers)
 
     if response.status_code != 200:
+        logger.error(f"[Stream {stream_id}] [M3U8 Master ERROR] Upstream status {response.status_code} for URL: {url}")
         raise HTTPException(response.status_code, "Upstream playlist error")
 
     rewritten, prefetch_urls = rewrite_m3u8(
         response.text,
-        session["url"],
+        url,
         f"{request.base_url}hls/{stream_id}/",
     )
 
@@ -562,9 +587,11 @@ async def hls(stream_id: int, encoded_url: str, request: Request):
 
     # Detect playlist correctly even with query params
     if is_m3u8_url(url):
+        logger.info(f"[Stream {stream_id}] [M3U8 Variant] Fetching sub-playlist from: {url}")
         response = await fetch_text(url, request_headers)
 
         if response.status_code != 200:
+            logger.error(f"[Stream {stream_id}] [M3U8 Variant ERROR] Upstream status {response.status_code} for: {url}")
             raise HTTPException(response.status_code, "Upstream playlist error")
 
         rewritten, prefetch_urls = rewrite_m3u8(
@@ -581,6 +608,7 @@ async def hls(stream_id: int, encoded_url: str, request: Request):
         )
 
     # Segment
+    logger.info(f"[Stream {stream_id}] [HLS Segment] Fetching: {url} | Range: {request_headers.get('Range') or 'Full'}")
     resp = await serve_raw_segment(
         stream_id=stream_id,
         url=url,
@@ -601,9 +629,12 @@ async def manifest(stream_id: int, request: Request):
     if session is None:
         raise HTTPException(404, "Stream not found")
 
-    response = await fetch_text(session["url"], session["headers"].copy())
+    url = session["url"]
+    logger.info(f"[Stream {stream_id}] [DASH MPD] Fetching manifest from: {url}")
+    response = await fetch_text(url, session["headers"].copy())
 
     if response.status_code != 200:
+        logger.error(f"[Stream {stream_id}] [DASH ERROR] Upstream status {response.status_code} for: {url}")
         raise HTTPException(response.status_code, "Unable to fetch MPD")
 
     proxy_base = f"{request.base_url}proxy/{stream_id}/"
@@ -629,6 +660,7 @@ async def proxy(stream_id: int, path: str, request: Request):
 
     base_url = session.get("base_url") or (session["url"].rsplit("/", 1)[0] + "/")
     url = urljoin(base_url, path)
+    logger.info(f"[Stream {stream_id}] [DASH Segment] Fetching: {url}")
 
     headers = session["headers"].copy()
     if "range" in request.headers:
@@ -665,6 +697,7 @@ async def proxy(stream_id: int, path: str, request: Request):
 async def video(stream_id: int, request: Request, filename: str | None = None):
     session = get_session(stream_id)
     if session is None:
+        logger.warning(f"[Stream {stream_id}] [VIDEO] Stream not found (404)")
         raise HTTPException(404, "Stream not found")
 
     url = session.get("resolved_url") or session["url"]
@@ -676,6 +709,8 @@ async def video(stream_id: int, request: Request, filename: str | None = None):
         headers["Range"] = request.headers["range"]
     if "if-range" in request.headers:
         headers["If-Range"] = request.headers["if-range"]
+
+    logger.info(f"[Stream {stream_id}] [VIDEO] Fetching video stream: {url} | Range: {headers.get('Range') or 'Full'}")
 
     # Handle HEAD request
     if request.method == "HEAD":
@@ -694,9 +729,14 @@ async def video(stream_id: int, request: Request, filename: str | None = None):
 
     # If upstream returned HTML error/redirect (e.g. expired link / IP-bound token), attempt auto-resolution
     if "text/html" in content_type or response.status_code not in (200, 206):
+        logger.warning(
+            f"[Stream {stream_id}] [AUTO-RESOLVE] Upstream status {response.status_code} / Content-Type '{content_type}'. "
+            f"Attempting to auto-resolve fresh URL for: {session['url']}"
+        )
         await response.aclose()
         resolved_url, resolved_headers = await resolvers.resolve_stream(session["url"], session["headers"])
         if resolved_url and resolved_url != url:
+            logger.info(f"[Stream {stream_id}] [AUTO-RESOLVE SUCCESS] Resolved to: {resolved_url}")
             session["resolved_url"] = resolved_url
             session["resolved_headers"] = resolved_headers
             url = resolved_url
@@ -710,6 +750,7 @@ async def video(stream_id: int, request: Request, filename: str | None = None):
             content_type = response.headers.get("content-type", "").lower()
 
     if "text/html" in content_type:
+        logger.error(f"[Stream {stream_id}] [VIDEO ERROR] Upstream returned HTML instead of media for: {url}")
         await response.aclose()
         raise HTTPException(
             status_code=403,
@@ -758,6 +799,10 @@ async def upload(
         sessions = load_sessions()
         reset_runtime_state()
 
+        logger.info(f"[UPLOAD] Successfully uploaded {len(sessions)} stream(s):")
+        for s in sessions.values():
+            logger.info(f"  -> Stream {s['id']} [{s['type']}]: {s['url']}")
+
         return {
             "success": True,
             "message": "Upload successful",
@@ -766,4 +811,5 @@ async def upload(
         }
 
     except json.JSONDecodeError:
+        logger.error("[UPLOAD ERROR] Invalid JSON provided")
         raise HTTPException(400, "Invalid JSON")
