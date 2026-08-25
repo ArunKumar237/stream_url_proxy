@@ -21,13 +21,16 @@ def load_streams():
 
     for idx, stream in enumerate(data.get("streams", [])):
         url = stream["url"]
+        stype = (stream.get("type") or "VIDEO").upper()
+        headers = stream.get("headers") or {}
 
         sessions[idx] = {
             "id": idx,
-            "type": (stream.get("type") or "VIDEO").upper(),
+            "type": stype,
             "url": url,
             "base_url": url.rsplit("/", 1)[0] + "/",
-            "headers": stream.get("headers") or {},
+            "headers": headers,
         }
+        logger.info(f"Loaded Stream {idx} [{stype}]: {url}")
 
     return sessions
