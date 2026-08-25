@@ -14,6 +14,7 @@ from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 from fastapi.middleware.cors import CORSMiddleware
 import stream_loader
+import resolvers
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Config
@@ -631,8 +632,9 @@ async def video(stream_id: int, request: Request, filename: str | None = None):
     if session is None:
         raise HTTPException(404, "Stream not found")
 
-    url = session["url"]
-    headers = session["headers"].copy()
+    url = session.get("resolved_url") or session["url"]
+    base_headers = session.get("resolved_headers") or session["headers"]
+    headers = base_headers.copy()
 
     # Forward client Range and conditional headers to upstream
     if "range" in request.headers:
@@ -654,6 +656,23 @@ async def video(stream_id: int, request: Request, filename: str | None = None):
 
     response = await fetch_raw_stream(url, headers)
     content_type = response.headers.get("content-type", "").lower()
+
+    # If upstream returned HTML error/redirect (e.g. expired link / IP-bound token), attempt auto-resolution
+    if "text/html" in content_type or response.status_code not in (200, 206):
+        await response.aclose()
+        resolved_url, resolved_headers = await resolvers.resolve_stream(session["url"], session["headers"])
+        if resolved_url and resolved_url != url:
+            session["resolved_url"] = resolved_url
+            session["resolved_headers"] = resolved_headers
+            url = resolved_url
+            headers = resolved_headers.copy()
+            if "range" in request.headers:
+                headers["Range"] = request.headers["range"]
+            if "if-range" in request.headers:
+                headers["If-Range"] = request.headers["if-range"]
+            # Retry with fresh resolved URL
+            response = await fetch_raw_stream(url, headers)
+            content_type = response.headers.get("content-type", "").lower()
 
     if "text/html" in content_type:
         await response.aclose()
