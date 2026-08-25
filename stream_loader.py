@@ -24,10 +24,10 @@ def load_streams():
 
         sessions[idx] = {
             "id": idx,
-            "type": stream["type"].upper(),
+            "type": (stream.get("type") or "VIDEO").upper(),
             "url": url,
             "base_url": url.rsplit("/", 1)[0] + "/",
-            "headers": stream.get("headers", {})
+            "headers": stream.get("headers") or {},
         }
 
     return sessions

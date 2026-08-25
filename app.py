@@ -43,6 +43,7 @@ RAW_FORWARD_HEADERS = (
     "ETag",
     "Last-Modified",
     "Cache-Control",
+    "Content-Disposition",
 )
 
 _URI_RE = re.compile(r'URI="([^"]+)"')
@@ -157,9 +158,45 @@ def get_session(stream_id: int) -> dict | None:
 
 def is_m3u8_url(url: str) -> bool:
     try:
-        return urlparse(url).path.lower().endswith(".m3u8")
+        path = urlparse(url).path.lower()
+        return path.endswith(".m3u8") or path.endswith(".m3u")
     except Exception:
-        return url.lower().endswith(".m3u8")
+        clean = url.split("?")[0].lower()
+        return clean.endswith(".m3u8") or clean.endswith(".m3u")
+
+
+def is_dash_url(url: str) -> bool:
+    try:
+        path = urlparse(url).path.lower()
+        return path.endswith(".mpd")
+    except Exception:
+        clean = url.split("?")[0].lower()
+        return clean.endswith(".mpd")
+
+
+def guess_video_content_type(url: str, default: str = "video/mp4") -> str:
+    try:
+        clean_path = urlparse(url).path.lower()
+    except Exception:
+        clean_path = url.split("?")[0].lower()
+
+    if clean_path.endswith((".mp4", ".m4v", ".m4a")):
+        return "video/mp4"
+    if clean_path.endswith(".mkv"):
+        return "video/x-matroska"
+    if clean_path.endswith(".webm"):
+        return "video/webm"
+    if clean_path.endswith(".avi"):
+        return "video/x-msvideo"
+    if clean_path.endswith(".mov"):
+        return "video/quicktime"
+    if clean_path.endswith(".flv"):
+        return "video/x-flv"
+    if clean_path.endswith(".ts"):
+        return "video/mp2t"
+    if clean_path.endswith(".3gp"):
+        return "video/3gpp"
+    return default
 
 
 def unique_urls(urls: list[str]) -> list[str]:
@@ -417,18 +454,22 @@ async def list_streams():
 
 
 @app.get("/play/{stream_id}")
+@app.head("/play/{stream_id}")
 async def play(stream_id: int, request: Request):
     session = get_session(stream_id)
     if session is None:
         raise HTTPException(404, "Stream not found")
 
-    if session["type"] == "DASH":
+    stype = session.get("type", "").upper()
+    url = session.get("url", "")
+
+    if stype in ("DASH", "MPD") or is_dash_url(url):
         return RedirectResponse(f"{request.base_url}manifest/{stream_id}.mpd")
 
-    if session["type"] == "M3U8":
+    if stype in ("M3U8", "HLS", "M3U") or is_m3u8_url(url):
         return RedirectResponse(f"{request.base_url}playlist/{stream_id}.m3u8")
 
-    raise HTTPException(400, f"Unsupported stream type: {session['type']}")
+    return RedirectResponse(f"{request.base_url}video/{stream_id}")
 
 
 @app.get("/playlist/{stream_id}.m3u8")
@@ -572,6 +613,63 @@ async def proxy(stream_id: int, path: str, request: Request):
         url=url,
         headers=headers,
         cache_key=cache_key,
+    )
+
+
+@app.get("/video/{stream_id}")
+@app.get("/video/{stream_id}.mp4")
+@app.get("/video/{stream_id}/{filename:path}")
+@app.get("/stream/{stream_id}")
+@app.get("/direct/{stream_id}")
+@app.head("/video/{stream_id}")
+@app.head("/video/{stream_id}.mp4")
+@app.head("/video/{stream_id}/{filename:path}")
+@app.head("/stream/{stream_id}")
+@app.head("/direct/{stream_id}")
+async def video(stream_id: int, request: Request, filename: str | None = None):
+    session = get_session(stream_id)
+    if session is None:
+        raise HTTPException(404, "Stream not found")
+
+    url = session["url"]
+    headers = session["headers"].copy()
+
+    # Forward client Range and conditional headers to upstream
+    if "range" in request.headers:
+        headers["Range"] = request.headers["range"]
+    if "if-range" in request.headers:
+        headers["If-Range"] = request.headers["if-range"]
+
+    # Handle HEAD request
+    if request.method == "HEAD":
+        try:
+            head_resp = await raw_client.head(url, headers=headers)
+            resp_headers = pick_raw_headers(head_resp.headers)
+            resp_headers.setdefault("Accept-Ranges", "bytes")
+            if "Content-Type" not in resp_headers:
+                resp_headers["Content-Type"] = guess_video_content_type(url)
+            return Response(status_code=head_resp.status_code, headers=resp_headers)
+        except Exception:
+            pass
+
+    response = await fetch_raw_stream(url, headers)
+    resp_headers = pick_raw_headers(response.headers)
+    resp_headers.setdefault("Accept-Ranges", "bytes")
+    if "Content-Type" not in resp_headers:
+        resp_headers["Content-Type"] = guess_video_content_type(url)
+
+    async def stream_raw():
+        try:
+            async for chunk in response.aiter_raw(chunk_size=STREAM_CHUNK_SIZE):
+                yield chunk
+        finally:
+            await response.aclose()
+
+    return StreamingResponse(
+        stream_raw(),
+        status_code=response.status_code,
+        headers=resp_headers,
+        background=BackgroundTask(response.aclose),
     )
 
 
