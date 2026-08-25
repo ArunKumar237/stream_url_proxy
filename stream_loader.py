@@ -1,5 +1,8 @@
 import json
+import logging
 from pathlib import Path
+
+logger = logging.getLogger("stream_proxy.loader")
 
 STREAM_FILE = Path("streams.json")
 
