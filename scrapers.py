@@ -12,8 +12,15 @@ DEFAULT_HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.moviezwap.taxi/",
+    "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
 }
 
 
@@ -21,48 +28,63 @@ DEFAULT_HEADERS = {
 # 1. MoviezWap Scraper
 # ──────────────────────────────────────────────────────────────────────────────
 
+MOVIEZWAP_DOMAINS = [
+    "https://www.moviezwap.taxi",
+    "https://moviezwap.land",
+    "https://moviezwap.yachts",
+]
+
+
 async def search_moviezwap(query: str) -> list[dict]:
     results = []
-    search_url = f"https://www.moviezwap.taxi/search.php?find={quote_plus(query)}"
 
-    try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
-            r = await client.get(search_url, headers=DEFAULT_HEADERS)
-            if r.status_code != 200:
-                return []
+    async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+        for domain in MOVIEZWAP_DOMAINS:
+            search_url = f"{domain}/search.php?find={quote_plus(query)}"
+            headers = {**DEFAULT_HEADERS, "Referer": f"{domain}/"}
 
-            # Match movie link items: <a href="/movie/Movie-Name.html">Title</a> or similar
-            matches = re.finditer(
-                r'<a[^>]+href=["\'](/movie/[^"\']+\.html)["\'][^>]*>(.*?)</a>',
-                r.text,
-                re.IGNORECASE,
-            )
+            try:
+                r = await client.get(search_url, headers=headers)
+                logger.info(f"[SCRAPER_MOVIEZWAP] Status {r.status_code} from {domain}")
 
-            seen_urls = set()
-            for m in matches:
-                href = m.group(1)
-                title = re.sub(r'<[^>]+>', '', m.group(2)).strip()
-                abs_url = urljoin("https://www.moviezwap.taxi", href)
-
-                if not title or abs_url in seen_urls:
+                if r.status_code != 200:
                     continue
-                seen_urls.add(abs_url)
 
-                # Extract year if present
-                year_match = re.search(r'\((\d{4})\)', title)
-                year = year_match.group(1) if year_match else "Movie"
+                # Match movie link items: <a href="/movie/Movie-Name.html">Title</a> or similar
+                matches = re.finditer(
+                    r'<a[^>]+href=["\'](/movie/[^"\']+\.html)["\'][^>]*>(.*?)</a>',
+                    r.text,
+                    re.IGNORECASE,
+                )
 
-                results.append({
-                    "title": title,
-                    "year": year,
-                    "provider": "MoviezWap",
-                    "url": abs_url,
-                    "poster": "https://img.icons8.com/color/480/movie-projector.png",
-                    "badge": "Telugu / Hindi / Tamil",
-                })
+                seen_urls = set()
+                for m in matches:
+                    href = m.group(1)
+                    title = re.sub(r'<[^>]+>', '', m.group(2)).strip()
+                    abs_url = urljoin(domain, href)
 
-    except Exception as e:
-        logger.error(f"[SCRAPER_ERROR] MoviezWap search error for '{query}': {e}")
+                    if not title or abs_url in seen_urls:
+                        continue
+                    seen_urls.add(abs_url)
+
+                    # Extract year if present
+                    year_match = re.search(r'\((\d{4})\)', title)
+                    year = year_match.group(1) if year_match else "Movie"
+
+                    results.append({
+                        "title": title,
+                        "year": year,
+                        "provider": "MoviezWap",
+                        "url": abs_url,
+                        "poster": "https://img.icons8.com/color/480/movie-projector.png",
+                        "badge": "Telugu / Hindi / Tamil",
+                    })
+
+                if results:
+                    break
+
+            except Exception as e:
+                logger.error(f"[SCRAPER_ERROR] MoviezWap search error for '{query}' on {domain}: {e}")
 
     return results
 
