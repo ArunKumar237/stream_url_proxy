@@ -218,9 +218,8 @@ async def generic_crawl_resolve(
 # Provider-Specific Enhancements (Auto-Resolvers)
 # ──────────────────────────────────────────────────────────────────────────────
 
-async def resolve_moviezwap(url: str, headers: dict) -> tuple[str | None, dict]:
+async def resolve_moviezwap(url: str, headers: dict, target_quality: str = "720p") -> tuple[str | None, dict]:
     """Specialized handler for MoviezWap sites to extract live stream tokens."""
-    target_quality = "720p"
     if "1080p" in url.lower():
         target_quality = "1080p"
     elif "480p" in url.lower():
@@ -291,7 +290,7 @@ async def resolve_moviezwap(url: str, headers: dict) -> tuple[str | None, dict]:
 # Master Resolver
 # ──────────────────────────────────────────────────────────────────────────────
 
-async def resolve_stream(url: str, headers: dict) -> tuple[str, dict]:
+async def resolve_stream(url: str, headers: dict, target_quality: str = "720p") -> tuple[str, dict]:
     """
     Generalized entry point that handles ANY streaming provider:
     1. Provider-specific extractors if matched (e.g. MoviezWap).
@@ -299,12 +298,12 @@ async def resolve_stream(url: str, headers: dict) -> tuple[str, dict]:
     3. Fallback to original URL and headers.
     """
     url_lower = url.lower()
-    logger.info(f"[RESOLVER_START] Starting resolution for input URL: {url}")
+    logger.info(f"[RESOLVER_START] Starting resolution for input URL: {url} (target_quality={target_quality})")
 
     # Provider 1: MoviezWap
     if "moviezwap" in url_lower or "moviezzwaphd" in url_lower:
         try:
-            res_url, res_headers = await resolve_moviezwap(url, headers)
+            res_url, res_headers = await resolve_moviezwap(url, headers, target_quality=target_quality)
             if res_url:
                 logger.info(f"[RESOLVER_SUCCESS] Resolved via MoviezWap extractor -> {res_url}")
                 return res_url, res_headers

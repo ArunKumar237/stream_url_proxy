@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MovieBox - Stream & Search</title>
+  <!-- HLS.js for browser video streaming -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #131b2e;
+      --card-hover: #1b2640;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --accent: #f59e0b;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --border: rgba(255, 255, 255, 0.08);
+      --radius: 14px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    header {
+      padding: 2.5rem 1.5rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      background: radial-gradient(circle at top, rgba(59, 130, 246, 0.15) 0%, transparent 70%);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .brand-icon {
+      font-size: 2rem;
+    }
+
+    .brand h1 {
+      font-size: 2rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #60a5fa, #a855f7);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.5px;
+    }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      margin-bottom: 1.75rem;
+      max-width: 500px;
+    }
+
+    .search-container {
+      width: 100%;
+      max-width: 620px;
+      position: relative;
+    }
+
+    .search-box {
+      display: flex;
+      align-items: center;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.4rem 0.5rem 0.4rem 1.25rem;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+      transition: all 0.2s ease;
+    }
+
+    .search-box:focus-within {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+    }
+
+    .search-box input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 500;
+    }
+
+    .search-box input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .search-btn {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      outline: none;
+      padding: 0.75rem 1.5rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: background 0.2s ease;
+    }
+
+    .search-btn:hover {
+      background: var(--primary-hover);
+    }
+
+    main {
+      flex: 1;
+      max-width: 1200px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 1.5rem;
+    }
+
+    .results-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+    }
+
+    .results-count {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .movie-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .movie-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .movie-card:hover {
+      transform: translateY(-5px);
+      border-color: rgba(59, 130, 246, 0.4);
+      box-shadow: 0 15px 30px rgba(0, 0, 0, 0.5);
+      background: var(--card-hover);
+    }
+
+    .poster-wrap {
+      width: 100%;
+      height: 280px;
+      background: #0d1322;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .poster-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 0.3s ease;
+    }
+
+    .movie-card:hover .poster-wrap img {
+      transform: scale(1.04);
+    }
+
+    .badge {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #38bdf8;
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 0.25rem 0.6rem;
+      border-radius: 6px;
+    }
+
+    .provider-tag {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      background: var(--primary);
+      color: #fff;
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .movie-info {
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      flex: 1;
+    }
+
+    .movie-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .movie-meta {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    /* Modal / Video Player */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(10px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      z-index: 999;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+    }
+
+    .modal-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      width: 100%;
+      max-width: 800px;
+      overflow: hidden;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+      animation: popIn 0.2s ease-out;
+    }
+
+    @keyframes popIn {
+      from { opacity: 0; transform: scale(0.96); }
+      to { opacity: 1; transform: scale(1); }
+    }
+
+    .modal-header {
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .modal-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 90%;
+    }
+
+    .close-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1.5rem;
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .close-btn:hover {
+      color: #fff;
+    }
+
+    .player-container {
+      width: 100%;
+      background: #000;
+      aspect-ratio: 16 / 9;
+      position: relative;
+    }
+
+    .player-container video {
+      width: 100%;
+      height: 100%;
+      outline: none;
+    }
+
+    .modal-body {
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .action-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+
+    .action-btn {
+      flex: 1;
+      min-width: 160px;
+      padding: 0.75rem 1.25rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #1e293b;
+      color: #fff;
+      font-weight: 600;
+      font-size: 0.9rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+
+    .action-btn.primary {
+      background: var(--primary);
+      border-color: var(--primary);
+    }
+
+    .action-btn:hover {
+      opacity: 0.9;
+      transform: translateY(-2px);
+    }
+
+    .stream-url-box {
+      display: flex;
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.4rem 0.75rem;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .stream-url-box input {
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      font-family: monospace;
+      flex: 1;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      border-top-color: #fff;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 4rem 1rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <span class="brand-icon">🎬</span>
+      <h1>MovieBox Stream</h1>
+    </div>
+    <p class="subtitle">Search, resolve, and stream cinema directly in your browser or VLC with zero ads.</p>
+    
+    <div class="search-container">
+      <form id="searchForm" class="search-box">
+        <input type="text" id="searchInput" placeholder="Search movies (e.g. Irumudi, Kalki, Avatar)..." required autocomplete="off">
+        <button type="submit" class="search-btn" id="searchBtn">
+          <span>Search</span>
+        </button>
+      </form>
+    </div>
+  </header>
+
+  <main>
+    <div class="results-header" id="resultsHeader" style="display: none;">
+      <span class="results-count" id="resultsCount">0 movies found</span>
+    </div>
+
+    <div class="movie-grid" id="movieGrid">
+      <div class="empty-state" style="grid-column: 1 / -1;">
+        <p>Type a movie title above to search across available streaming providers.</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Player Modal -->
+  <div class="modal-overlay" id="playerModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span class="modal-title" id="modalTitle">Loading Stream...</span>
+        <button class="close-btn" id="closeModal">&times;</button>
+      </div>
+      
+      <div class="player-container">
+        <video id="videoPlayer" controls playsinline></video>
+      </div>
+
+      <div class="modal-body">
+        <div class="action-group">
+          <a href="#" id="vlcBtn" class="action-btn primary">
+            <span>🟠 Open in VLC</span>
+          </a>
+          <button id="copyBtn" class="action-btn">
+            <span>📋 Copy Link</span>
+          </button>
+        </div>
+
+        <div class="stream-url-box">
+          <input type="text" id="streamUrlInput" readonly value="Resolving stream URL...">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const searchForm = document.getElementById('searchForm');
+    const searchInput = document.getElementById('searchInput');
+    const searchBtn = document.getElementById('searchBtn');
+    const movieGrid = document.getElementById('movieGrid');
+    const resultsHeader = document.getElementById('resultsHeader');
+    const resultsCount = document.getElementById('resultsCount');
+
+    const playerModal = document.getElementById('playerModal');
+    const closeModal = document.getElementById('closeModal');
+    const modalTitle = document.getElementById('modalTitle');
+    const videoPlayer = document.getElementById('videoPlayer');
+    const vlcBtn = document.getElementById('vlcBtn');
+    const copyBtn = document.getElementById('copyBtn');
+    const streamUrlInput = document.getElementById('streamUrlInput');
+
+    let hlsInstance = null;
+
+    // Handle Search Form
+    searchForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const query = searchInput.value.trim();
+      if (!query) return;
+
+      searchBtn.innerHTML = '<span class="spinner"></span>';
+      searchBtn.disabled = true;
+
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+        const data = await res.json();
+        renderResults(data.results || []);
+      } catch (err) {
+        movieGrid.innerHTML = `<div class="empty-state" style="grid-column: 1 / -1;"><p style="color: #ef4444;">Search failed: ${err.message}</p></div>`;
+      } finally {
+        searchBtn.innerHTML = '<span>Search</span>';
+        searchBtn.disabled = false;
+      }
+    });
+
+    function renderResults(movies) {
+      resultsHeader.style.display = 'flex';
+      resultsCount.innerText = `${movies.length} result(s) found`;
+
+      if (movies.length === 0) {
+        movieGrid.innerHTML = `<div class="empty-state" style="grid-column: 1 / -1;"><p>No movies found. Try another search keyword.</p></div>`;
+        return;
+      }
+
+      movieGrid.innerHTML = movies.map(movie => `
+        <div class="movie-card" onclick="openMovie('${encodeURIComponent(JSON.stringify(movie))}')">
+          <div class="poster-wrap">
+            <img src="${movie.poster}" alt="${movie.title}" onerror="this.src='https://img.icons8.com/color/480/clapperboard.png'">
+            <span class="badge">${movie.year}</span>
+            <span class="provider-tag">${movie.provider}</span>
+          </div>
+          <div class="movie-info">
+            <div class="movie-title" title="${movie.title}">${movie.title}</div>
+            <div class="movie-meta">${movie.badge || 'Available Now'}</div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function openMovie(encodedMovie) {
+      const movie = JSON.parse(decodeURIComponent(encodedMovie));
+      modalTitle.innerText = movie.title;
+      streamUrlInput.value = 'Resolving live stream token...';
+      playerModal.classList.add('active');
+
+      if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+      videoPlayer.src = '';
+
+      try {
+        const res = await fetch('/api/resolve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: movie.url, provider: movie.provider })
+        });
+        const data = await res.json();
+
+        if (!data.success) {
+          streamUrlInput.value = 'Failed to resolve stream: ' + (data.detail || 'Unknown error');
+          return;
+        }
+
+        const fullPlayUrl = window.location.origin + data.play_url;
+        streamUrlInput.value = fullPlayUrl;
+        vlcBtn.href = `vlc://${fullPlayUrl}`;
+
+        // Play in browser
+        if (data.type === 'M3U8' || data.hls_url) {
+          const hlsUrl = window.location.origin + (data.hls_url || data.play_url);
+          if (Hls.isSupported()) {
+            hlsInstance = new Hls();
+            hlsInstance.loadSource(hlsUrl);
+            hlsInstance.attachMedia(videoPlayer);
+            hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+              videoPlayer.play().catch(() => {});
+            });
+          } else if (videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
+            videoPlayer.src = hlsUrl;
+            videoPlayer.play().catch(() => {});
+          }
+        } else {
+          // Direct MP4 / Video
+          videoPlayer.src = fullPlayUrl;
+          videoPlayer.play().catch(() => {});
+        }
+
+      } catch (err) {
+        streamUrlInput.value = 'Error resolving: ' + err.message;
+      }
+    }
+
+    // Close Modal
+    closeModal.addEventListener('click', () => {
+      playerModal.classList.remove('active');
+      if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+      videoPlayer.pause();
+      videoPlayer.src = '';
+    });
+
+    // Copy URL
+    copyBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText(streamUrlInput.value).then(() => {
+        const original = copyBtn.innerHTML;
+        copyBtn.innerHTML = '<span>✅ Copied!</span>';
+        setTimeout(() => copyBtn.innerHTML = original, 2000);
+      });
+    });
+  </script>
+</body>
+</html>
