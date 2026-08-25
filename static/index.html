@@ -487,6 +487,46 @@
 
     let hlsInstance = null;
 
+    // Client-side search helper (Hybrid fallback if server IP is blocked)
+    async function clientSideSearchMoviezWap(query) {
+      const domains = ['https://www.moviezwap.taxi', 'https://moviezwap.land', 'https://moviezwap.yachts'];
+      for (const dom of domains) {
+        try {
+          const res = await fetch(`${dom}/search.php?find=${encodeURIComponent(query)}`);
+          if (!res.ok) continue;
+          const html = await res.text();
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, 'text/html');
+          const links = doc.querySelectorAll('a[href*="/movie/"]');
+          const results = [];
+          const seen = new Set();
+
+          links.forEach(a => {
+            const href = a.getAttribute('href');
+            const title = a.textContent.trim();
+            const absUrl = href.startsWith('http') ? href : `${dom}${href.startsWith('/') ? '' : '/'}${href}`;
+            if (title && !seen.has(absUrl)) {
+              seen.add(absUrl);
+              const yearMatch = title.match(/\((\d{4})\)/);
+              results.push({
+                title: title,
+                year: yearMatch ? yearMatch[1] : 'Movie',
+                provider: 'MoviezWap',
+                url: absUrl,
+                poster: 'https://img.icons8.com/color/480/movie-projector.png',
+                badge: 'Telugu / Hindi / Tamil'
+              });
+            }
+          });
+
+          if (results.length > 0) return results;
+        } catch (e) {
+          // continue to next domain
+        }
+      }
+      return [];
+    }
+
     // Handle Search Form
     searchForm.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -499,9 +539,25 @@
       try {
         const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
         const data = await res.json();
-        renderResults(data.results || []);
+        let results = data.results || [];
+
+        // Hybrid Approach: if cloud datacenter was blocked by provider, search directly from phone/browser!
+        if (results.length === 0) {
+          const clientResults = await clientSideSearchMoviezWap(query);
+          if (clientResults.length > 0) {
+            results = clientResults;
+          }
+        }
+
+        renderResults(results);
       } catch (err) {
-        movieGrid.innerHTML = `<div class="empty-state" style="grid-column: 1 / -1;"><p style="color: #ef4444;">Search failed: ${err.message}</p></div>`;
+        // Direct browser search attempt on fetch error
+        const clientResults = await clientSideSearchMoviezWap(query);
+        if (clientResults.length > 0) {
+          renderResults(clientResults);
+        } else {
+          movieGrid.innerHTML = `<div class="empty-state" style="grid-column: 1 / -1;"><p style="color: #ef4444;">Search failed: ${err.message}</p></div>`;
+        }
       } finally {
         searchBtn.innerHTML = '<span>Search</span>';
         searchBtn.disabled = false;
@@ -608,3 +664,4 @@
   </script>
 </body>
 </html>
+
